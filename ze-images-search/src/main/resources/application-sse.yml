@@ -1,0 +1,16 @@
+spring:
+  ai:
+    mcp:
+      server:
+        name: ze-images-search
+        version: 0.0.1
+        type: SYNC
+        # sse
+        stdio: false
+        # SSE 端点配置
+        sse-endpoint: /sse
+        sse-message-endpoint: /mcp/message
+
+pexels:
+  api-key: ${PEXELS_API_KEY:}
+

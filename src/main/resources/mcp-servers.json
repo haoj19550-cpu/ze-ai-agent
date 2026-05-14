@@ -1,0 +1,15 @@
+{
+  "mcpServers": {
+    "ze-images-search": {
+      "command": "java",
+      "args": [
+        "-Dspring.ai.mcp.server.stdio=false",
+        "-Dspring.main.web-application-type=none",
+        "-Dlogging.level.root=OFF",
+        "-jar",
+        "ze-images-search/target/ze-images-search-0.0.1-SNAPSHOT.jar"
+      ],
+      "env": {}
+    }
+  }
+}

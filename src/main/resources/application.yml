@@ -1,0 +1,72 @@
+spring:
+  application:
+    name: ze-ai-agent
+  profiles:
+    active: local
+  ai:
+    dashscope:
+      api-key: ${BAILIAN_API_KEY}
+      chat:
+        options:
+          model: glm-5
+      embedding:
+        options:
+          model: text-embedding-v2
+    mcp:
+      client:
+         sse:
+           connections:
+             server1:
+               url: http://localhost:8127
+               sse-endpoint: /sse
+    #        stdio:
+#          servers-configuration: classpath:mcp-servers.json
+    vectorstore:
+      pgvector:
+        index-type: HNSW
+        dimensions: 1536
+        distance-type: COSINE_DISTANCE
+        max-document-batch-size: 10000 # Optional: Maximum number of documents per batch
+        enable: false #如果需要使用这个数据库，改成true
+  # MySQL 数据库配置
+  datasource:
+    url: jdbc:mysql://localhost:3306/ze_ai_agent?useUnicode=true&characterEncoding=utf8&useSSL=false&serverTimezone=Asia/Shanghai&allowPublicKeyRetrieval=true
+    username: root
+    password: ${MYSQL_PASSWORD:}
+    driver-class-name: com.mysql.cj.jdbc.Driver
+
+
+
+# MyBatis-Plus 配置
+mybatis-plus:
+  configuration:
+    map-underscore-to-camel-case: true  # 驼峰命名转换
+    log-impl: org.apache.ibatis.logging.stdout.StdOutImpl  # 打印 SQL 日志
+  global-config:
+    db-config:
+      id-type: auto  # 主键自增
+      logic-delete-field: deleted  # 逻辑删除字段
+      logic-delete-value: 1
+      logic-not-delete-value: 0
+server:
+  port: 8080
+  servlet:
+    context-path: /api
+
+# springdoc-openapi????
+springdoc:
+  swagger-ui:
+    path: /swagger-ui.html
+    tags-sorter: alpha
+    operations-sorter: alpha
+  api-docs:
+    path: /v3/api-docs
+  group-configs:
+    - group: 'default'
+      paths-to-match: '/**'
+      packages-to-scan: com.zegao.zeaiagent.Controller
+# knife4j???????????????
+knife4j:
+  enable: true
+  setting:
+    language: zh_cn
