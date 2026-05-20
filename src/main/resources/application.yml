@@ -8,52 +8,46 @@ spring:
       api-key: ${BAILIAN_API_KEY}
       chat:
         options:
-          model: deepseek-v4-pro 
+          model: deepseek-v4-pro
       embedding:
         options:
           model: text-embedding-v2
     mcp:
       client:
-         sse:
-           connections:
-             server1:
-               url: http://localhost:8127
-               sse-endpoint: /sse
-    #        stdio:
-#          servers-configuration: classpath:mcp-servers.json
+        sse:
+          connections:
+            server1:
+              url: http://localhost:8127
+              sse-endpoint: /sse
     vectorstore:
       pgvector:
         index-type: HNSW
         dimensions: 1536
         distance-type: COSINE_DISTANCE
-        max-document-batch-size: 10000 # Optional: Maximum number of documents per batch
-        enable: false #如果需要使用这个数据库，改成true
-  # MySQL 数据库配置
+        max-document-batch-size: 10000
+        enable: false
   datasource:
-    url: jdbc:mysql://localhost:3306/ze_ai_agent?useUnicode=true&characterEncoding=utf8&useSSL=false&serverTimezone=Asia/Shanghai&allowPublicKeyRetrieval=true
-    username: root
-    password: 123456
+    url: ${MYSQL_URL:jdbc:mysql://localhost:3306/ze_ai_agent?useUnicode=true&characterEncoding=utf8&useSSL=false&serverTimezone=Asia/Shanghai&allowPublicKeyRetrieval=true}
+    username: ${MYSQL_USERNAME:root}
+    password: ${MYSQL_PASSWORD:123456}
     driver-class-name: com.mysql.cj.jdbc.Driver
 
-
-
-# MyBatis-Plus 配置
 mybatis-plus:
   configuration:
-    map-underscore-to-camel-case: true  # 驼峰命名转换
-    log-impl: org.apache.ibatis.logging.stdout.StdOutImpl  # 打印 SQL 日志
+    map-underscore-to-camel-case: true
+    log-impl: org.apache.ibatis.logging.stdout.StdOutImpl
   global-config:
     db-config:
-      id-type: auto  # 主键自增
-      logic-delete-field: deleted  # 逻辑删除字段
+      id-type: auto
+      logic-delete-field: deleted
       logic-delete-value: 1
       logic-not-delete-value: 0
+
 server:
   port: 8080
   servlet:
     context-path: /api
 
-# springdoc-openapi????
 springdoc:
   swagger-ui:
     path: /swagger-ui.html
@@ -62,10 +56,10 @@ springdoc:
   api-docs:
     path: /v3/api-docs
   group-configs:
-    - group: 'default'
+    - group: default
       paths-to-match: '/**'
       packages-to-scan: com.zegao.zeaiagent.Controller
-# knife4j???????????????
+
 knife4j:
   enable: true
   setting:
