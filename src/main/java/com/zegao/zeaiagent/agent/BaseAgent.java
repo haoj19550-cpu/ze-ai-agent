@@ -12,6 +12,7 @@ import org.springframework.web.servlet.mvc.method.annotation.SseEmitter;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.concurrent.CompletableFuture;
+import java.util.function.Consumer;
 
 /**
  * 抽象基础代理类，用于管理代理状态和执行流程。
@@ -95,8 +96,13 @@ public abstract class BaseAgent {
      * @return SseEmitter实例
      */
     public SseEmitter runStream(String userPrompt) {
+        return runStream(userPrompt, null);
+    }
+
+    public SseEmitter runStream(String userPrompt, Consumer<String> onComplete) {
         // 创建SseEmitter，设置较长的超时时间
         SseEmitter emitter = new SseEmitter(300000L); // 5分钟超时
+        StringBuilder visibleOutput = new StringBuilder();
 
         // 使用线程异步处理，避免阻塞主线程
         CompletableFuture.runAsync(() -> {
@@ -129,11 +135,17 @@ public abstract class BaseAgent {
 
                         // 发送每一步的结果
                         emitter.send(result);
+                        visibleOutput.append(result).append("\n");
                     }
                     // 检查是否超出步骤限制
                     if (currentStep >= maxSteps) {
                         state = AgentState.FINISHED;
-                        emitter.send("执行结束: 达到最大步骤 (" + maxSteps + ")");
+                        String result = "执行结束: 达到最大步骤 (" + maxSteps + ")";
+                        emitter.send(result);
+                        visibleOutput.append(result);
+                    }
+                    if (onComplete != null) {
+                        onComplete.accept(visibleOutput.toString().trim());
                     }
                     // 正常完成
                     emitter.complete();
@@ -141,7 +153,12 @@ public abstract class BaseAgent {
                     state = AgentState.ERROR;
                     log.error("执行智能体失败", e);
                     try {
-                        emitter.send("执行错误: " + e.getMessage());
+                        String result = "执行错误: " + e.getMessage();
+                        emitter.send(result);
+                        visibleOutput.append(result);
+                        if (onComplete != null) {
+                            onComplete.accept(visibleOutput.toString().trim());
+                        }
                         emitter.complete();
                     } catch (Exception ex) {
                         emitter.completeWithError(ex);

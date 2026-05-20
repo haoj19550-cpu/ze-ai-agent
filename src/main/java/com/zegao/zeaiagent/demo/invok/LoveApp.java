@@ -47,7 +47,7 @@ public class LoveApp {
           // 初始化基于 MySQL 的对话记忆
           ChatMemory chatMemory = MessageWindowChatMemory.builder()
                   .chatMemoryRepository(mysqlChatMemoryRepository)
-                  .maxMessages(10)
+                  .maxMessages(100)
                   .build();
           
           log.info("ChatMemory 类型: {}", chatMemory.getClass().getName());

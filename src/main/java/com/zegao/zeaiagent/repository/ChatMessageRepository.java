@@ -15,6 +15,15 @@ public interface ChatMessageRepository extends BaseMapper<ChatMessage> {
     @Select("SELECT DISTINCT conversation_id FROM chat_messages ORDER BY conversation_id ASC")
     List<String> selectDistinctConversationIds();
 
+    @Select("""
+            SELECT conversation_id
+            FROM chat_messages
+            WHERE conversation_id LIKE CONCAT(#{prefix}, '%')
+            GROUP BY conversation_id
+            ORDER BY MAX(created_at) DESC, MAX(id) DESC
+            """)
+    List<String> selectConversationIdsByPrefix(@Param("prefix") String prefix);
+
     @Select("SELECT * FROM chat_messages WHERE conversation_id = #{conversationId} ORDER BY message_order ASC, id ASC")
     List<ChatMessage> selectByConversationIdOrderByMessageOrderAsc(@Param("conversationId") String conversationId);
 

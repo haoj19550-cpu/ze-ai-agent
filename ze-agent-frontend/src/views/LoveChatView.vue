@@ -1,18 +1,13 @@
 <script setup>
-import { computed } from 'vue'
-
 import ChatRoom from '@/components/ChatRoom.vue'
-import { createChatId } from '@/utils/session'
 
-const chatId = createChatId('love')
-
-const requestConfig = computed(() => ({
+const requestConfig = {
   path: '/ai/Love_app/Chat/sse',
-  getParams: (message) => ({
+  getParams: (message, chatId) => ({
     message,
     chatId,
   }),
-}))
+}
 </script>
 
 <template>
@@ -21,7 +16,8 @@ const requestConfig = computed(() => ({
     subtitle="温柔、直接、可追问的恋爱聊天助手"
     assistant-name="恋爱大师"
     placeholder="描述你的问题，比如：最近和 TA 聊天总是冷场怎么办？"
+    app-type="love"
+    chat-id-prefix="love"
     :request-config="requestConfig"
-    :chat-id="chatId"
   />
 </template>

@@ -13,7 +13,9 @@ Vue3 + Vite frontend for the ZE AI Agent Spring Boot backend.
 The dev server proxies `/api` to `http://localhost:8080`.
 
 - `GET /api/ai/Love_app/Chat/sse?message=...&chatId=...`
-- `GET /api/ai/manus/chat?message=...`
+- `GET /api/ai/manus/chat?message=...&chatId=...`
+- `GET /api/ai/chats?appType=love|manus`
+- `GET /api/ai/chats/{chatId}/messages`
 
 ## Run
 

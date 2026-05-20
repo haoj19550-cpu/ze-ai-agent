@@ -1,8 +1,10 @@
 <script setup>
-import { nextTick, onBeforeUnmount, ref } from 'vue'
-import { RouterLink } from 'vue-router'
+import { nextTick, onBeforeUnmount, onMounted, ref } from 'vue'
 
+import { fetchChatMessages, fetchChatSessions } from '@/api/chats'
 import { createChatEventSource } from '@/api/sse'
+import ConversationSidebar from '@/components/ConversationSidebar.vue'
+import { createChatId } from '@/utils/session'
 
 const props = defineProps({
   title: {
@@ -21,28 +23,39 @@ const props = defineProps({
     type: String,
     default: '请输入消息...',
   },
+  appType: {
+    type: String,
+    required: true,
+  },
+  chatIdPrefix: {
+    type: String,
+    required: true,
+  },
   requestConfig: {
     type: Object,
     required: true,
   },
-  chatId: {
-    type: String,
-    default: '',
-  },
 })
 
 const inputText = ref('')
-const messages = ref([
-  {
-    id: 'welcome',
-    role: 'assistant',
-    content: '你好，我已经准备好了。把你的问题发给我，我们开始吧。',
-  },
-])
+const messages = ref([])
+const conversations = ref([])
+const currentChatId = ref('')
 const isStreaming = ref(false)
+const isLoadingConversations = ref(false)
+const isLoadingMessages = ref(false)
 const errorMessage = ref('')
+const historyError = ref('')
 const messageListRef = ref(null)
 let activeStream = null
+
+function createWelcomeMessage() {
+  return {
+    id: 'welcome',
+    role: 'assistant',
+    content: `你好，我是${props.assistantName}。把你的问题发给我，我们开始吧。`,
+  }
+}
 
 function scrollToBottom() {
   nextTick(() => {
@@ -60,6 +73,77 @@ function closeActiveStream() {
   }
 }
 
+function resetToNewChat() {
+  closeActiveStream()
+  currentChatId.value = createChatId(props.chatIdPrefix)
+  messages.value = [createWelcomeMessage()]
+  errorMessage.value = ''
+  inputText.value = ''
+  isStreaming.value = false
+  scrollToBottom()
+}
+
+function normalizeHistoryMessages(historyMessages) {
+  const normalized = historyMessages
+    .filter((message) => message.role === 'user' || message.role === 'assistant')
+    .map((message, index) => ({
+      id: `${message.role}-${message.order || index}-${currentChatId.value}`,
+      role: message.role,
+      content: message.content || '',
+    }))
+
+  return normalized.length > 0 ? normalized : [createWelcomeMessage()]
+}
+
+async function loadConversations(selectInitial = false) {
+  isLoadingConversations.value = true
+  historyError.value = ''
+
+  try {
+    const sessions = await fetchChatSessions(props.appType)
+    conversations.value = sessions
+
+    if (selectInitial) {
+      if (sessions.length > 0) {
+        await selectConversation(sessions[0].chatId)
+      } else {
+        resetToNewChat()
+      }
+    }
+  } catch (error) {
+    historyError.value = '历史记录加载失败'
+    if (selectInitial && !currentChatId.value) {
+      resetToNewChat()
+    }
+  } finally {
+    isLoadingConversations.value = false
+  }
+}
+
+async function selectConversation(chatId) {
+  if (!chatId) {
+    return
+  }
+
+  closeActiveStream()
+  currentChatId.value = chatId
+  errorMessage.value = ''
+  inputText.value = ''
+  isStreaming.value = false
+  isLoadingMessages.value = true
+
+  try {
+    const historyMessages = await fetchChatMessages(chatId)
+    messages.value = normalizeHistoryMessages(historyMessages)
+  } catch (error) {
+    errorMessage.value = '历史消息加载失败，请稍后重试。'
+    messages.value = [createWelcomeMessage()]
+  } finally {
+    isLoadingMessages.value = false
+    scrollToBottom()
+  }
+}
+
 function appendAssistantContent(messageId, content) {
   const message = messages.value.find((item) => item.id === messageId)
   if (message) {
@@ -71,6 +155,7 @@ function appendAssistantContent(messageId, content) {
 function markStreamDone() {
   isStreaming.value = false
   activeStream = null
+  loadConversations(false)
   scrollToBottom()
 }
 
@@ -80,10 +165,15 @@ function sendMessage() {
     return
   }
 
+  if (!currentChatId.value) {
+    currentChatId.value = createChatId(props.chatIdPrefix)
+  }
+
   closeActiveStream()
   errorMessage.value = ''
   inputText.value = ''
 
+  messages.value = messages.value.filter((item) => item.id !== 'welcome')
   messages.value.push({
     id: `user-${Date.now()}`,
     role: 'user',
@@ -102,7 +192,7 @@ function sendMessage() {
 
   activeStream = createChatEventSource(
     props.requestConfig.path,
-    props.requestConfig.getParams(message),
+    props.requestConfig.getParams(message, currentChatId.value),
     {
       onMessage: (chunk) => appendAssistantContent(assistantMessageId, chunk),
       onDone: markStreamDone,
@@ -131,24 +221,38 @@ function handleKeydown(event) {
   }
 }
 
+onMounted(() => {
+  loadConversations(true)
+})
+
 onBeforeUnmount(() => {
   closeActiveStream()
 })
 </script>
 
 <template>
-  <main class="chat-page">
-    <section class="chat-shell">
+  <main class="chat-layout">
+    <ConversationSidebar
+      :app-type="appType"
+      :conversations="conversations"
+      :current-chat-id="currentChatId"
+      :loading="isLoadingConversations"
+      :error="historyError"
+      @new-chat="resetToNewChat"
+      @select-chat="selectConversation"
+    />
+
+    <section class="chat-main">
       <header class="chat-header">
-        <RouterLink class="back-link" to="/" aria-label="返回主页">←</RouterLink>
         <div class="chat-title">
           <h1>{{ title }}</h1>
           <p>{{ subtitle }}</p>
-          <span v-if="chatId" class="chat-id">聊天室 ID：{{ chatId }}</span>
+          <span v-if="currentChatId" class="chat-id">聊天室 ID：{{ currentChatId }}</span>
         </div>
       </header>
 
       <div ref="messageListRef" class="message-list" aria-live="polite">
+        <p v-if="isLoadingMessages" class="message-loading">正在加载历史消息...</p>
         <article
           v-for="message in messages"
           :key="message.id"
