@@ -1,8 +1,9 @@
 package com.zegao.zeaiagent.agent;
 
 import cn.hutool.core.collection.CollUtil;
-import com.alibaba.cloud.ai.dashscope.chat.DashScopeChatOptions;
-import com.zegao.zeaiagent.agent.ReActAgent;
+import cn.hutool.json.JSONArray;
+import cn.hutool.json.JSONObject;
+import cn.hutool.json.JSONUtil;
 import com.zegao.zeaiagent.agent.model.AgentState;
 import lombok.Data;
 import lombok.EqualsAndHashCode;
@@ -20,117 +21,235 @@ import org.springframework.ai.model.tool.ToolExecutionResult;
 import org.springframework.ai.tool.ToolCallback;
 
 import java.util.List;
+import java.util.Locale;
 import java.util.stream.Collectors;
 
-/**
- * 处理工具调用的基础代理类，具体实现了 think 和 act 方法，可以用作创建实例的父类
- */
 @EqualsAndHashCode(callSuper = true)
 @Data
 @Slf4j
-public  class ToolCallAgent extends ReActAgent {
+public class ToolCallAgent extends ReActAgent {
 
-    // 可用的工具
     private final ToolCallback[] availableTools;
 
-    // 保存了工具调用信息的响应
     private ChatResponse toolCallChatResponse;
 
-    // 工具调用管理者
     private final ToolCallingManager toolCallingManager;
 
-    // 禁用内置的工具调用机制，自己维护上下文
     private final ChatOptions chatOptions;
 
     public ToolCallAgent(ToolCallback[] availableTools) {
         super();
         this.availableTools = availableTools;
         this.toolCallingManager = ToolCallingManager.builder().build();
-        // 禁用 Spring AI 内置的工具调用机制，自己维护选项和消息上下文
         this.chatOptions = ToolCallingChatOptions.builder()
                 .toolCallbacks(availableTools)
                 .internalToolExecutionEnabled(false)
                 .build();
     }
-    /**
-     * 处理当前状态并决定下一步行动
-     *
-     * @return 是否需要执行行动
-     */
+
     @Override
     public boolean think() {
         if (getNextStepPrompt() != null && !getNextStepPrompt().isEmpty()) {
             UserMessage userMessage = new UserMessage(getNextStepPrompt());
             getMessageList().add(userMessage);
         }
+
+        emitStream("正在分析你的需求...\n");
         List<Message> messageList = getMessageList();
         Prompt prompt = new Prompt(messageList, chatOptions);
+
         try {
-            // 获取带工具选项的响应
             ChatResponse chatResponse = getChatClient().prompt(prompt)
                     .system(getSystemPrompt())
                     .call()
                     .chatResponse();
-            // 记录响应，用于 Act
+
             this.toolCallChatResponse = chatResponse;
             AssistantMessage assistantMessage = chatResponse.getResult().getOutput();
-            // 输出提示信息
             String result = assistantMessage.getText();
             List<AssistantMessage.ToolCall> toolCallList = assistantMessage.getToolCalls();
-            log.info(getName() + "的思考: " + result);
-            log.info(getName() + "选择了 " + toolCallList.size() + " 个工具来使用");
-            String toolCallInfo = toolCallList.stream()
-                    .map(toolCall -> String.format("工具名称：%s，参数：%s",
-                            toolCall.name(),
-                            toolCall.arguments())
-                    )
-                    .collect(Collectors.joining("\n"));
-            log.info(toolCallInfo);
+
+            log.info("{} thinking: {}", getName(), result);
+            log.info("{} selected {} tool(s)", getName(), toolCallList.size());
+            log.info(toolCallList.stream()
+                    .map(toolCall -> String.format("tool=%s, arguments=%s", toolCall.name(), toolCall.arguments()))
+                    .collect(Collectors.joining("\n")));
+
             if (toolCallList.isEmpty()) {
-                // 只有不调用工具时，才记录助手消息
                 getMessageList().add(assistantMessage);
+                if (hasText(result)) {
+                    emitStream(result.trim() + "\n");
+                }
+                setState(AgentState.FINISHED);
                 return false;
-            } else {
-                // 需要调用工具时，无需记录助手消息，因为调用工具时会自动记录
-                return true;
             }
+
+            emitStream(buildToolPlanMessage(toolCallList));
+            return true;
         } catch (Exception e) {
-            log.error(getName() + "的思考过程遇到了问题: " + e.getMessage());
-            getMessageList().add(
-                    new AssistantMessage("处理时遇到错误: " + e.getMessage()));
+            log.error("{} thinking failed: {}", getName(), e.getMessage(), e);
+            String error = "处理时遇到问题：" + e.getMessage();
+            getMessageList().add(new AssistantMessage(error));
+            emitStream(error + "\n");
             return false;
         }
     }
 
-    /**
-     * 执行工具调用并处理结果
-     *
-     * @return 执行结果
-     */
     @Override
     public String act() {
         if (!toolCallChatResponse.hasToolCalls()) {
-            return "没有工具调用";
+            return "";
         }
-        // 调用工具
+
+        emitStream("正在获取信息并整理结果...\n");
         Prompt prompt = new Prompt(getMessageList(), chatOptions);
         ToolExecutionResult toolExecutionResult = toolCallingManager.executeToolCalls(prompt, toolCallChatResponse);
-        // 记录消息上下文，conversationHistory 已经包含了助手消息和工具调用返回的结果
         setMessageList(toolExecutionResult.conversationHistory());
-        // 当前工具调用的结果
+
         ToolResponseMessage toolResponseMessage = (ToolResponseMessage) CollUtil.getLast(toolExecutionResult.conversationHistory());
-        String results = toolResponseMessage.getResponses().stream()
-                .map(response -> "工具 " + response.name() + " 完成了它的任务！结果: " + response.responseData())
-                .collect(Collectors.joining("\n"));
-        // 判断是否调用了终止工具
+        String userVisibleResult = summarizeToolResponses(toolResponseMessage);
+
         boolean terminateToolCalled = toolResponseMessage.getResponses().stream()
                 .anyMatch(response -> "doTerminate".equals(response.name()));
         if (terminateToolCalled) {
             setState(AgentState.FINISHED);
         }
-        log.info(results);
-        return results;
+
+        if (hasText(userVisibleResult)) {
+            emitStream(userVisibleResult + "\n");
+        }
+        log.info("tool result summary: {}", userVisibleResult);
+        return userVisibleResult;
     }
 
+    private String buildToolPlanMessage(List<AssistantMessage.ToolCall> toolCallList) {
+        String tools = toolCallList.stream()
+                .map(toolCall -> displayToolName(toolCall.name()))
+                .distinct()
+                .collect(Collectors.joining("、"));
+        return "我会先使用" + tools + "，拿到关键信息后再继续整理。\n";
+    }
 
+    private String summarizeToolResponses(ToolResponseMessage toolResponseMessage) {
+        return toolResponseMessage.getResponses().stream()
+                .map(response -> summarizeToolResponse(response.name(), String.valueOf(response.responseData())))
+                .filter(this::hasText)
+                .collect(Collectors.joining("\n\n"));
+    }
+
+    private String summarizeToolResponse(String toolName, String rawData) {
+        if (!hasText(rawData)) {
+            return "";
+        }
+
+        String lowerToolName = toolName == null ? "" : toolName.toLowerCase(Locale.ROOT);
+        if (lowerToolName.contains("search")) {
+            return summarizeSearchResults(rawData);
+        }
+
+        if (lowerToolName.contains("terminate")) {
+            return "任务已完成。";
+        }
+
+        String cleaned = rawData.trim();
+        if (looksLikeStructuredData(cleaned) && cleaned.length() > 300) {
+            return displayToolName(toolName) + "已完成，正在基于结果继续整理。";
+        }
+
+        return limitText(cleaned, 600);
+    }
+
+    private String summarizeSearchResults(String rawData) {
+        List<JSONObject> results = parseSearchResults(rawData);
+        if (results.isEmpty()) {
+            return "搜索已完成，正在基于搜索结果继续整理。";
+        }
+
+        StringBuilder summary = new StringBuilder("我找到了这些可参考的信息：\n");
+        int count = Math.min(results.size(), 3);
+        for (int i = 0; i < count; i++) {
+            JSONObject result = results.get(i);
+            String title = firstText(result, "title", "name");
+            String snippet = firstText(result, "snippet", "description");
+            String link = firstText(result, "displayed_link", "link");
+
+            summary.append(i + 1).append(". ").append(hasText(title) ? title : "相关结果").append("\n");
+            if (hasText(snippet)) {
+                summary.append("   ").append(limitText(snippet, 90)).append("\n");
+            }
+            if (hasText(link)) {
+                summary.append("   来源：").append(link).append("\n");
+            }
+        }
+
+        return summary.toString().trim();
+    }
+
+    private List<JSONObject> parseSearchResults(String rawData) {
+        String trimmed = rawData.trim();
+        try {
+            JSONArray array = trimmed.startsWith("[")
+                    ? JSONUtil.parseArray(trimmed)
+                    : JSONUtil.parseArray("[" + trimmed + "]");
+            return array.stream()
+                    .filter(JSONObject.class::isInstance)
+                    .map(JSONObject.class::cast)
+                    .toList();
+        } catch (Exception e) {
+            log.warn("Failed to parse search result for display summary", e);
+            return List.of();
+        }
+    }
+
+    private String firstText(JSONObject object, String... keys) {
+        for (String key : keys) {
+            String value = object.getStr(key);
+            if (hasText(value)) {
+                return value.trim();
+            }
+        }
+        return "";
+    }
+
+    private String displayToolName(String toolName) {
+        if (!hasText(toolName)) {
+            return "工具";
+        }
+
+        String lowerToolName = toolName.toLowerCase(Locale.ROOT);
+        if (lowerToolName.contains("search")) {
+            return "网络搜索";
+        }
+        if (lowerToolName.contains("pdf")) {
+            return "PDF 生成";
+        }
+        if (lowerToolName.contains("download")) {
+            return "资源下载";
+        }
+        if (lowerToolName.contains("file")) {
+            return "文件处理";
+        }
+        if (lowerToolName.contains("terminal")) {
+            return "终端执行";
+        }
+        if (lowerToolName.contains("terminate")) {
+            return "完成任务";
+        }
+        return toolName;
+    }
+
+    private boolean looksLikeStructuredData(String value) {
+        return value.startsWith("{") || value.startsWith("[") || value.contains("\":");
+    }
+
+    private String limitText(String value, int maxLength) {
+        if (value.length() <= maxLength) {
+            return value;
+        }
+        return value.substring(0, maxLength) + "...";
+    }
+
+    private boolean hasText(String value) {
+        return value != null && !value.isBlank();
+    }
 }

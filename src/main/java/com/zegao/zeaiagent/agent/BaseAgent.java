@@ -44,6 +44,15 @@ public abstract class BaseAgent {
     // Memory（需要自主维护会话上下文）
     private List<Message> messageList = new ArrayList<>();
 
+    private transient Consumer<String> streamConsumer;
+
+    protected void emitStream(String content) {
+        if (content == null || content.isBlank() || streamConsumer == null) {
+            return;
+        }
+        streamConsumer.accept(content);
+    }
+
     /**
      * 运行代理
      *
@@ -103,6 +112,17 @@ public abstract class BaseAgent {
         // 创建SseEmitter，设置较长的超时时间
         SseEmitter emitter = new SseEmitter(300000L); // 5分钟超时
         StringBuilder visibleOutput = new StringBuilder();
+        this.streamConsumer = content -> {
+            try {
+                emitter.send(content);
+                visibleOutput.append(content);
+                if (!content.endsWith("\n")) {
+                    visibleOutput.append("\n");
+                }
+            } catch (Exception e) {
+                throw new RuntimeException(e);
+            }
+        };
 
         // 使用线程异步处理，避免阻塞主线程
         CompletableFuture.runAsync(() -> {
@@ -130,12 +150,13 @@ public abstract class BaseAgent {
                         log.info("Executing step " + stepNumber + "/" + maxSteps);
 
                         // 单步执行
+                        int outputLengthBeforeStep = visibleOutput.length();
                         String stepResult = step();
-                        String result = "Step " + stepNumber + ": " + stepResult;
-
-                        // 发送每一步的结果
-                        emitter.send(result);
-                        visibleOutput.append(result).append("\n");
+                        if (stepResult != null
+                                && !stepResult.isBlank()
+                                && visibleOutput.length() == outputLengthBeforeStep) {
+                            emitStream(stepResult + "\n");
+                        }
                     }
                     // 检查是否超出步骤限制
                     if (currentStep >= maxSteps) {
@@ -166,6 +187,7 @@ public abstract class BaseAgent {
                 } finally {
                     // 清理资源
                     this.cleanup();
+                    this.streamConsumer = null;
                 }
             } catch (Exception e) {
                 emitter.completeWithError(e);
